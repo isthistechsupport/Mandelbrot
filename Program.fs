@@ -16,6 +16,8 @@ type CliArguments =
     | [<AltCommandLine("-x")>] X of value: float
     | [<AltCommandLine("-y")>] Y of value: float
     | [<AltCommandLine("-d")>] MaxDepth of value: int
+    | [<AltCommandLine("-a")>] Async
+    | [<AltCommandLine("-s")>] Silent
     interface IArgParserTemplate with
         member s.Usage =
             match s with
@@ -24,6 +26,8 @@ type CliArguments =
             | X _ -> "specify the x coordinate of the center of the render window (default -0.5)"
             | Y _ -> "specify the y coordinate of the center of the render window (default 0)"
             | MaxDepth _ -> "specify the maximum recursion depth (default 50)."
+            | Async -> "use asynchronous rendering."
+            | Silent -> "suppress output."
 
 
 let scale (x0:float) x1 y1 = (x0/x1) * y1
@@ -80,18 +84,21 @@ let main argv =
     let errorHandler = ProcessExiter(colorizer = function ErrorCode.HelpText -> None | _ -> Some System.ConsoleColor.Red)
     let parser = ArgumentParser.Create<CliArguments>(errorHandler = errorHandler)
     let results = parser.Parse argv
-    let imageSideLen = results.GetResult(ImageSideLength, 1024)
-    let windowSideLen = results.GetResult(WindowSideLength, 3.0)
-    let x = results.GetResult(X, -0.5)
-    let y = results.GetResult(Y, 0.0)
-    let maxDepth = results.GetResult(MaxDepth, 50)
+    let imageSideLen = results.GetResult (ImageSideLength, 1024)
+    let windowSideLen = results.GetResult (WindowSideLength, 3.0)
+    let x = results.GetResult (X, -0.5)
+    let y = results.GetResult (Y, 0.0)
+    let maxDepth = results.GetResult (MaxDepth, 50)
+    let async = results.Contains Async
+    let silent = results.Contains Silent
     let stopwatch = Stopwatch.StartNew()
     let x0 = x - (windowSideLen / 2.0)
     let y0 = y - (windowSideLen / 2.0)
-    let async = true
-    printfn "Rendering image of size %d x %d with window size %.2f centered at (%.2f, %.2f) and origin at (%.2f, %.2f) with max depth %d." imageSideLen imageSideLen windowSideLen x y x0 y0 maxDepth
+    if not silent then
+        printfn "Rendering image of size %d x %d with window size %.2f centered at (%.2f, %.2f) and origin at (%.2f, %.2f) with max depth %d." imageSideLen imageSideLen windowSideLen x y x0 y0 maxDepth
     dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async
     stopwatch.Stop()
     let time = stopwatch.Elapsed.TotalMilliseconds
-    printfn "Image rendered in %.2f ms." time
+    if not silent then
+        printfn "Image rendered in %.2f ms." time
     0
