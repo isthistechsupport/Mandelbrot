@@ -7,6 +7,7 @@ open System.IO
 open SixLabors.ImageSharp
 open SixLabors.ImageSharp.PixelFormats
 open System.Diagnostics
+open System.Threading.Tasks
 
 
 type CliArguments =
@@ -22,7 +23,7 @@ type CliArguments =
             | WindowSideLength _ -> "specify the size of the render window (default 3.0)."
             | X _ -> "specify the x coordinate of the center of the render window (default -0.5)"
             | Y _ -> "specify the y coordinate of the center of the render window (default 0)"
-            | MaxDepth _ -> "specify the maximum recursion depth (default 75)."
+            | MaxDepth _ -> "specify the maximum recursion depth (default 50)."
 
 
 let scale (x0:float) x1 y1 = (x0/x1) * y1
@@ -35,7 +36,7 @@ let rec coordToMSetValue = function
 
 
 let mSetValueToPixelTuple = function
-| x when x = 256 -> (0uy, 0uy, 0uy)
+| x when x = 256 -> (255uy, 255uy, 255uy)
 | x when x > 127 -> (byte x, 255uy, byte x)
 | x -> (0uy, byte x, 0uy)
 
@@ -44,7 +45,14 @@ let pixelTupleToPixel (r, g, b) = new Rgb24(r, g, b)
 
 
 let nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<Rgb24>) =
-    async {
+    let x = n % imageSideLen
+    let y = n / imageSideLen
+    let pixel = (0.0, 0.0, ((scale (float x) (float imageSideLen) (windowSideLen)) + (x0)), ((scale (float y) (float imageSideLen) (windowSideLen)) + (y0)), 0, maxDepth) |> (coordToMSetValue >> mSetValueToPixelTuple >> pixelTupleToPixel)
+    image[x, y] <- pixel
+
+
+let nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<Rgb24>) =
+    task {
         let x = n % imageSideLen
         let y = n / imageSideLen
         let pixel = (0.0, 0.0, ((scale (float x) (float imageSideLen) (windowSideLen)) + (x0)), ((scale (float y) (float imageSideLen) (windowSideLen)) + (y0)), 0, maxDepth) |> (coordToMSetValue >> mSetValueToPixelTuple >> pixelTupleToPixel)
@@ -54,11 +62,15 @@ let nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<R
 
 let dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async =
     using (new Image<Rgb24>(imageSideLen, imageSideLen)) (fun image ->
-        [0..(imageSideLen * imageSideLen - 1)]
-        |> Seq.map (fun n -> nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image)
-        |> Async.Parallel
-        |> Async.StartAsTask
-        |> ignore
+        match async with
+        | true ->
+            [0..(imageSideLen * imageSideLen - 1)]
+            |> Seq.map (fun n -> nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth image)
+            |> Task.WhenAll
+            |> Task.WaitAll
+        | false ->
+            [0..(imageSideLen * imageSideLen - 1)]
+            |> Seq.iter (fun n -> nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image)
         using (File.Open("mandelbrot.jpg", FileMode.OpenOrCreate)) (fun fileStream ->
             image.SaveAsJpeg fileStream))
 
@@ -72,11 +84,11 @@ let main argv =
     let windowSideLen = results.GetResult(WindowSideLength, 3.0)
     let x = results.GetResult(X, -0.5)
     let y = results.GetResult(Y, 0.0)
-    let maxDepth = results.GetResult(MaxDepth, 75)
+    let maxDepth = results.GetResult(MaxDepth, 50)
     let stopwatch = Stopwatch.StartNew()
     let x0 = x - (windowSideLen / 2.0)
     let y0 = y - (windowSideLen / 2.0)
-    let async = false
+    let async = true
     printfn "Rendering image of size %d x %d with window size %.2f centered at (%.2f, %.2f) and origin at (%.2f, %.2f) with max depth %d." imageSideLen imageSideLen windowSideLen x y x0 y0 maxDepth
     dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async
     stopwatch.Stop()
