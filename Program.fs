@@ -13,13 +13,20 @@ open BenchmarkDotNet.Running
 open BenchmarkDotNet.Jobs
 
 
+type ThreadingType =
+    | SyncThreading = 0
+    | AsyncThreading = 1
+    | TaskThreading = 2
+    | ParallelThreading = 3
+
+
 type CliArguments =
     | [<AltCommandLine("-i")>] ImageSideLength of pixels: int
     | [<AltCommandLine("-w")>] WindowSideLength of length: float
     | [<AltCommandLine("-x")>] X of value: float
     | [<AltCommandLine("-y")>] Y of value: float
     | [<AltCommandLine("-d")>] MaxDepth of value: int
-    | [<AltCommandLine("-a")>] Async
+    | [<AltCommandLine("-a")>] Multithreading of ThreadingType
     | [<AltCommandLine("-s")>] Silent
     interface IArgParserTemplate with
         member s.Usage =
@@ -29,7 +36,7 @@ type CliArguments =
             | X _ -> "specify the x coordinate of the center of the render window (default -0.5)"
             | Y _ -> "specify the y coordinate of the center of the render window (default 0)"
             | MaxDepth _ -> "specify the maximum recursion depth (default 50)."
-            | Async -> "use asynchronous rendering."
+            | Multithreading _ -> "use asynchronous rendering. Options are: 0-Sync, 1-Async, 2-Task & 3-Parallel. Default is Sync."
             | Silent -> "suppress output."
 
 
@@ -78,21 +85,37 @@ let nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<R
     image[x, y] <- pixel
 
 
-let nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<Rgb24>) =
+let nToWrittenPixelAsyncTask n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<Rgb24>) =
     task {
         nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image
     }
 
 
-let dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async =
+let nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth (image : Image<Rgb24>) =
+    async {
+        nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image
+    }
+
+
+
+let dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth (threading: ThreadingType) =
     using (new Image<Rgb24>(imageSideLen, imageSideLen)) (fun image ->
-        match async with
-        | true ->
+        match threading with
+        | ThreadingType.ParallelThreading ->
+            Parallel.ForEach ([0..(imageSideLen * imageSideLen - 1)], fun n -> nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image)
+            |> ignore
+        | ThreadingType.TaskThreading ->
             [0..(imageSideLen * imageSideLen - 1)]
-            |> Seq.map (fun n -> nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth image)
+            |> Seq.map (fun n -> nToWrittenPixelAsyncTask n imageSideLen windowSideLen x0 y0 maxDepth image)
             |> Task.WhenAll
             |> Task.WaitAll
-        | false ->
+        | ThreadingType.AsyncThreading ->
+            [0..(imageSideLen * imageSideLen - 1)]
+            |> Seq.map (fun n -> nToWrittenPixelAsync n imageSideLen windowSideLen x0 y0 maxDepth image)
+            |> Async.Parallel
+            |> Async.RunSynchronously
+            |> ignore
+        | _ ->
             [0..(imageSideLen * imageSideLen - 1)]
             |> Seq.iter (fun n -> nToWrittenPixel n imageSideLen windowSideLen x0 y0 maxDepth image)
         using (File.Open("mandelbrot.jpg", FileMode.OpenOrCreate)) (fun fileStream ->
@@ -101,32 +124,21 @@ let dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async =
 
 [<SimpleJob(RuntimeMoniker.Net80)>]
 type Benchmarks() =
-    [<Params(128, 256, 512, 1024, 2048, 4096)>]
-    member val ImageSideLength = 0 with get, set
-    
     [<Benchmark(Baseline = true)>]
-    member this.RenderImage() =
-        let imageSideLen = this.ImageSideLength
-        let windowSideLen = 3.0
-        let x = -0.5
-        let y = 0.0
-        let maxDepth = 50
-        let async = false
-        let x0 = x - (windowSideLen / 2.0)
-        let y0 = y - (windowSideLen / 2.0)
-        dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async
+    member _.RenderImageSync() =
+        dimsToMSetImage 1024 3.0 (-2.0) (-1.5) 50 ThreadingType.SyncThreading
 
     [<Benchmark>]
-    member this.RenderImageAsync() =
-        let imageSideLen = this.ImageSideLength
-        let windowSideLen = 3.0
-        let x = -0.5
-        let y = 0.0
-        let maxDepth = 50
-        let async = true
-        let x0 = x - (windowSideLen / 2.0)
-        let y0 = y - (windowSideLen / 2.0)
-        dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async
+    member _.RenderImageAsync() =
+        dimsToMSetImage 1024 3.0 (-2.0) (-1.5) 50 ThreadingType.AsyncThreading
+
+    [<Benchmark>]
+    member _.RenderImageTask() =
+        dimsToMSetImage 1024 3.0 (-2.0) (-1.5) 50 ThreadingType.TaskThreading
+
+    [<Benchmark>]
+    member _.RenderImageParallel() =
+        dimsToMSetImage 1024 3.0 (-2.0) (-1.5) 50 ThreadingType.ParallelThreading
 
 
 //[<EntryPoint>]
@@ -139,14 +151,14 @@ let main argv =
     let x = results.GetResult (X, -0.5)
     let y = results.GetResult (Y, 0.0)
     let maxDepth = results.GetResult (MaxDepth, 50)
-    let async = results.Contains Async
+    let threading = results.GetResult (Multithreading, ThreadingType.SyncThreading)
     let silent = results.Contains Silent
     let stopwatch = Stopwatch.StartNew()
     let x0 = x - (windowSideLen / 2.0)
     let y0 = y - (windowSideLen / 2.0)
     if not silent then
         printfn "Rendering image of size %d x %d with window size %.2f centered at (%.2f, %.2f) and origin at (%.2f, %.2f) with max depth %d." imageSideLen imageSideLen windowSideLen x y x0 y0 maxDepth
-    dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth async
+    dimsToMSetImage imageSideLen windowSideLen x0 y0 maxDepth threading
     stopwatch.Stop()
     let time = stopwatch.Elapsed.TotalMilliseconds
     if not silent then
