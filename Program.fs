@@ -38,6 +38,11 @@ let renderImage q =
     Mandelbrot.dimsToMSetByteArray (imageSideLen, windowSideLen, x, y, maxDepth)
 
 
+let mimeTypes =
+  defaultMimeTypesMap
+    @@ (function | ".webp" -> createMimeType "image/webp" true | _ -> None)
+
+
 let joinFormData (req: HttpRequest) =
     [for value in req.multiPartFields do
         yield fst value, snd value |> Some]
@@ -49,7 +54,14 @@ let app =
             GET >=> choose [
                 path "/" >=>
                     Files.file "index.html"
-                Files.browseHome
+                path "/script.js" >=>
+                    Files.file "script.js"
+                path "/styles.css" >=>
+                    Files.file "styles.css"
+                path "/favicon.ico" >=>
+                    Files.file "favicon.ico"
+                path "/mandelbrot.webp" >=>
+                    Files.file "mandelbrot.webp" >=> setHeader "Content-Type" "image/webp"
                 RequestErrors.NOT_FOUND "Page not found."]
             POST >=> choose [
                 path "/api/render" >=>
@@ -73,7 +85,7 @@ let printRequestInfo (ctx: HttpContext) =
 [<EntryPoint>]
 let main _ =
     let cts = new CancellationTokenSource()
-    let conf = { defaultConfig with cancellationToken = cts.Token }
+    let conf = { defaultConfig with cancellationToken = cts.Token; mimeTypesMap = mimeTypes}
     let _, server = startWebServerAsync conf (app >=> fun ctx -> ctx |> logFormat |> printfn "%s"; succeed ctx)
         
     Async.Start(server, cts.Token)
