@@ -1,0 +1,20 @@
+.container {
+    text-align: center;
+}
+
+.image {
+    max-width: 100%;
+    height: auto;
+}
+
+.number-field {
+    margin: 10px 0;
+}
+
+.control-row {
+    margin-top: 20px;
+}
+
+.button {
+    margin: 0 5px;
+}
