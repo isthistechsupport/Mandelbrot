@@ -18,4 +18,4 @@ This is an dotnet project that provides a very simple web interface to explore a
 
 ## License
 
-This code is open sourced under the [MIT license](https://github.com/isthistechsupport/Mandelbrot/blob/main/LICENSE.md)
+This code is open sourced under the [MIT license](LICENSE.md)
